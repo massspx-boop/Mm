@@ -1,83 +1,156 @@
 package com.massspx.gamemodev7
 
-import android.app.*
-import android.os.*
-import android.content.*
-import android.graphics.Color
-import android.provider.Settings
+import android.app.Activity
+import android.app.AppOpsManager
 import android.app.usage.UsageStatsManager
-import android.view.*
-import android.widget.*
+import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Color
+import android.os.Bundle
+import android.provider.Settings
+import android.widget.Button
+import android.widget.CheckBox
+import android.widget.LinearLayout
+import android.widget.ScrollView
+import android.widget.TextView
+import android.widget.Toast
 
 class MainActivity : Activity() {
-    private val prefs by lazy { getSharedPreferences("v7", MODE_PRIVATE) }
+    private val prefs by lazy { getSharedPreferences("v7", Context.MODE_PRIVATE) }
     private val selected = mutableSetOf<String>()
-    private lateinit var list: LinearLayout
+    private lateinit var appList: LinearLayout
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         selected.addAll(prefs.getStringSet("selected", emptySet()) ?: emptySet())
-        val root = LinearLayout(this).apply { orientation = 1; setPadding(22, 24, 22, 18); setBackgroundColor(Color.rgb(17,19,25)) }
-        root.addView(TextView(this).apply { text = "GAME MODE V7"; textSize = 25f; setTextColor(Color.WHITE); setPadding(0,0,0,8) })
-        root.addView(TextView(this).apply { text = "realme C30 • Android 11 • Root မလို"; textSize = 13f; setTextColor(0xFFB7C0D0.toInt()) })
-        root.addView(TextView(this).apply { text = "၁။ အောက်ကစာရင်းမှ ဂိမ်းကိုရွေးပါ။\n၂။ Overlay နဲ့ Usage Access ခွင့်ပြုပါ။\n၃။ စောင့်ကြည့်မှုစတင်ပါ။"; setTextColor(Color.WHITE); textSize=14f; setPadding(0,18,0,14) })
-        root.addView(Button(this).apply { text = "ခွင့်ပြုချက်များ ဖွင့်ရန်"; setOnClickListener { requestPermissionsFlow() } })
-        root.addView(TextView(this).apply { text = "ဖုန်းထဲက ဖွင့်လို့ရတဲ့ App / Game များ"; setTextColor(Color.WHITE); textSize=17f; setPadding(0,18,0,8) })
+
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(20, 22, 20, 18)
+            setBackgroundColor(Color.rgb(15, 18, 25))
+        }
+        root.addView(TextView(this).apply {
+            text = "GAME MODE V7"
+            textSize = 25f
+            setTextColor(Color.WHITE)
+        })
+        root.addView(TextView(this).apply {
+            text = "Lag Watch • Auto Detect • Low Overhead"
+            textSize = 13f
+            setTextColor(0xFF9EACC0.toInt())
+            setPadding(0, 4, 0, 14)
+        })
+        root.addView(TextView(this).apply {
+            text = "အသုံးပြုပုံ\n၁။ ဂိမ်းကိုရွေးပါ။\n၂။ Overlay နှင့် Usage Access ခွင့်ပြုပါ။\n၃။ V7 စတင်ပြီးနောက် ရွေးထားတဲ့ဂိမ်းကိုဖွင့်ပါ။"
+            textSize = 14f
+            setTextColor(Color.WHITE)
+            setPadding(0, 4, 0, 12)
+        })
+        root.addView(Button(this).apply {
+            text = "ခွင့်ပြုချက်များ စစ်ဆေး / ဖွင့်ရန်"
+            setOnClickListener { openNextPermission() }
+        })
+        root.addView(TextView(this).apply {
+            text = "ဖုန်းထဲရှိ ဖွင့်လို့ရသော App များ"
+            textSize = 16f
+            setTextColor(Color.WHITE)
+            setPadding(0, 14, 0, 6)
+        })
         val scroll = ScrollView(this)
-        list = LinearLayout(this).apply { orientation = 1 }
-        scroll.addView(list)
-        root.addView(scroll, LinearLayout.LayoutParams(-1,0,1f))
-        root.addView(Button(this).apply { text = "V7 စတင်မည်"; setOnClickListener { saveAndStart() } })
-        root.addView(Button(this).apply { text = "ရပ်မည်"; setOnClickListener { stopService(Intent(this@MainActivity, GameMonitorService::class.java)); Toast.makeText(this@MainActivity,"စောင့်ကြည့်မှု ရပ်လိုက်ပြီ",Toast.LENGTH_SHORT).show() } })
+        appList = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        scroll.addView(appList)
+        root.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
+        root.addView(Button(this).apply {
+            text = "V7 စတင်မည်"
+            setOnClickListener { startMonitor() }
+        })
+        root.addView(Button(this).apply {
+            text = "စောင့်ကြည့်မှု ရပ်မည်"
+            setOnClickListener {
+                stopService(Intent(this@MainActivity, GameMonitorService::class.java))
+                Toast.makeText(this@MainActivity, "V7 ရပ်လိုက်ပါပြီ", Toast.LENGTH_SHORT).show()
+            }
+        })
+        root.addView(TextView(this).apply {
+            text = "မှတ်ချက် - V7 သည် RAM/ဘက်ထရီအပူချိန်ကို စောင့်ကြည့်ပြီး Lag အန္တရာယ်ကို ခန့်မှန်းပေးသည်။ CPU/GPU Boost သို့မဟုတ် FPS တိုင်းတာမှုကို Root မရှိဘဲ အာမမခံပါ။"
+            textSize = 12f
+            setTextColor(0xFF9EACC0.toInt())
+            setPadding(0, 12, 0, 0)
+        })
         setContentView(root)
         loadApps()
     }
 
-    private fun requestPermissionsFlow() {
+    private fun hasUsageAccess(): Boolean {
+        val ops = getSystemService(Context.APP_OPS_SERVICE) as AppOpsManager
+        return try {
+            ops.checkOpNoThrow(AppOpsManager.OPSTR_GET_USAGE_STATS, android.os.Process.myUid(), packageName) == AppOpsManager.MODE_ALLOWED
+        } catch (_: Exception) { false }
+    }
+
+    private fun openNextPermission() {
         if (!Settings.canDrawOverlays(this)) {
             startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, android.net.Uri.parse("package:$packageName")))
             return
         }
-        val usm = getSystemService(USAGE_STATS_SERVICE) as UsageStatsManager
-        val now = System.currentTimeMillis()
-        val granted = usm.queryUsageStats(UsageStatsManager.INTERVAL_DAILY, now-86400000, now)?.isNotEmpty() == true
-        if (!granted) startActivity(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS))
-        else Toast.makeText(this,"လိုအပ်တဲ့ခွင့်ပြုချက် ရရှိပြီးပါပြီ",Toast.LENGTH_SHORT).show()
+        if (!hasUsageAccess()) {
+            startActivity(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS))
+            return
+        }
+        Toast.makeText(this, "လိုအပ်သော ခွင့်ပြုချက် ၂ ခု ရရှိပြီးပါပြီ", Toast.LENGTH_SHORT).show()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (::appList.isInitialized) {
+            // Permission screen မှ ပြန်လာလျှင် လက်ရှိအခြေအနေကို ပြန်စစ်နိုင်သည်။
+        }
     }
 
     private fun loadApps() {
         val pm = packageManager
-        val intent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
-        val apps = pm.queryIntentActivities(intent, PackageManager.MATCH_ALL)
+        val launchIntent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
+        val apps = pm.queryIntentActivities(launchIntent, PackageManager.MATCH_ALL)
             .filter { it.activityInfo.packageName != packageName }
             .distinctBy { it.activityInfo.packageName }
             .sortedBy { it.loadLabel(pm).toString().lowercase() }
-        list.removeAllViews()
+
+        appList.removeAllViews()
         for (info in apps) {
             val pkg = info.activityInfo.packageName
-            val cb = CheckBox(this).apply {
+            appList.addView(CheckBox(this).apply {
                 text = info.loadLabel(pm).toString()
+                textSize = 14f
                 setTextColor(Color.WHITE)
                 isChecked = selected.contains(pkg)
-                setOnCheckedChangeListener { _, checked -> if (checked) selected.add(pkg) else selected.remove(pkg) }
-            }
-            list.addView(cb)
+                setOnCheckedChangeListener { _, checked ->
+                    if (checked) selected.add(pkg) else selected.remove(pkg)
+                }
+            })
         }
-        if (apps.isEmpty()) list.addView(TextView(this).apply { text="App စာရင်း မရရှိပါ"; setTextColor(Color.WHITE) })
+        if (apps.isEmpty()) appList.addView(TextView(this).apply {
+            text = "ဖွင့်လို့ရသော App မတွေ့ပါ"
+            setTextColor(Color.WHITE)
+        })
     }
 
-    private fun saveAndStart() {
+    private fun startMonitor() {
         prefs.edit().putStringSet("selected", selected.toSet()).apply()
-        if (selected.isEmpty()) { Toast.makeText(this,"ဂိမ်းတစ်ခု အနည်းဆုံးရွေးပါ",Toast.LENGTH_LONG).show(); return }
-        if (!Settings.canDrawOverlays(this)) { requestPermissionsFlow(); return }
-        val usm = getSystemService(USAGE_STATS_SERVICE) as UsageStatsManager
-        val now = System.currentTimeMillis()
-        if (usm.queryUsageStats(UsageStatsManager.INTERVAL_DAILY, now-86400000, now)?.isEmpty() != false) {
-            requestPermissionsFlow(); return
+        if (selected.isEmpty()) {
+            Toast.makeText(this, "စောင့်ကြည့်မည့် Game/App တစ်ခု ရွေးပါ", Toast.LENGTH_LONG).show()
+            return
         }
-        if (Build.VERSION.SDK_INT >= 26) startForegroundService(Intent(this, GameMonitorService::class.java))
-        else startService(Intent(this, GameMonitorService::class.java))
-        Toast.makeText(this,"V7 စောင့်ကြည့်မှု စတင်ပါပြီ",Toast.LENGTH_LONG).show()
+        if (!Settings.canDrawOverlays(this) || !hasUsageAccess()) {
+            openNextPermission()
+            return
+        }
+        val intent = Intent(this, GameMonitorService::class.java)
+        try {
+            if (android.os.Build.VERSION.SDK_INT >= 26) startForegroundService(intent) else startService(intent)
+            Toast.makeText(this, "V7 စတင်ပါပြီ။ ယခု ရွေးထားသောဂိမ်းကို ဖွင့်နိုင်ပါပြီ။", Toast.LENGTH_LONG).show()
+        } catch (e: Exception) {
+            Toast.makeText(this, "စတင်မရပါ: ${e.message ?: "အမှား"}", Toast.LENGTH_LONG).show()
+        }
     }
 }
