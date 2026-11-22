@@ -1,0 +1,15 @@
+plugins {
+    id 'com.android.application'
+    id 'org.jetbrains.kotlin.android'
+}
+android {
+    namespace 'com.massspx.gamemodev7'
+    compileSdk 35
+    defaultConfig {
+        applicationId 'com.massspx.gamemodev7'
+        minSdk 23
+        targetSdk 32
+        versionCode 7
+        versionName '7.0'
+    }
+}
