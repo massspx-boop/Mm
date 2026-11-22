@@ -123,7 +123,7 @@ class GameMonitorService : Service() {
 
         val detail = if (expanded) {
             "\nRAM လွတ်: ${availableMb} / ${totalMb} MB (${ramPercent}%)" +
-                "\nBattery အပူချိန်: " + if (batteryTemp >= 0f) String.format(Locale.US, "%.1f°C", batteryTemp) else "မရနိုင်" +
+                "\nBattery အပူချိန်: " + (if (batteryTemp >= 0f) String.format(Locale.US, "%.1f°C", batteryTemp) else "မရနိုင်") +
                 "\nLag အန္တရာယ်: $risk" +
                 "\nအကြံပြုချက်: $advice" +
                 "\nCPU / FPS: မရနိုင် (Root မရှိ)"
