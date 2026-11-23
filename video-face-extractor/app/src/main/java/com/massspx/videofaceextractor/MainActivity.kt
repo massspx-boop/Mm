@@ -1,6 +1,6 @@
 package com.massspx.videofaceextractor
 
-import android.app.Activity
+import androidx.activity.ComponentActivity
 import android.content.ContentValues
 import android.content.Intent
 import android.graphics.Bitmap
@@ -34,7 +34,7 @@ import java.util.zip.ZipOutputStream
 import kotlin.math.max
 import kotlin.math.min
 
-class MainActivity : Activity() {
+class MainActivity : ComponentActivity() {
     private lateinit var status: TextView
     private lateinit var progress: ProgressBar
     private lateinit var chooseButton: Button
@@ -161,7 +161,7 @@ class MainActivity : Activity() {
                 throw IllegalStateException("Output folder ဖန်တီးမရပါ။")
             }
             val imageFiles = mutableListOf<File>()
-            val hashes = mutableListOf<Long>()
+            val savedTrackIds = mutableSetOf<Int>()
             var saved = 0
             var frameIndex = 0
             val intervalMs = 800L
@@ -169,7 +169,7 @@ class MainActivity : Activity() {
             var timeMs = 0L
 
             while (timeMs < durationMs && frameIndex < maxFrames) {
-                val frame = retriever.getFrameAtTime(timeMs * 1000L, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
+                val frame = retriever.getFrameAtTime(timeMs * 1000L, MediaMetadataRetriever.OPTION_CLOSEST)
                 if (frame != null) {
                     val scaled = downscale(frame, 960)
                     if (scaled !== frame) frame.recycle()
@@ -178,10 +178,11 @@ class MainActivity : Activity() {
                         for (face in faces) {
                             val crop = cropFace(scaled, face.boundingBox) ?: continue
                             try {
-                                val hash = averageHash(crop)
-                                val duplicate = hashes.any { java.lang.Long.bitCount(it xor hash) <= 3 }
-                                if (duplicate) continue
-                                hashes.add(hash)
+                                // Track IDs are scoped to this detector session. Do not compare
+                                // unrelated people's face crops with perceptual hashes: that can
+                                // incorrectly discard different people with similar-looking crops.
+                                val trackId = face.trackingId
+                                if (trackId != null && !savedTrackIds.add(trackId)) continue
                                 val name = String.format(Locale.US, "face_%04d_%06dms.jpg", saved + 1, timeMs)
                                 val outFile = File(outputDir, name)
                                 FileOutputStream(outFile).use {
