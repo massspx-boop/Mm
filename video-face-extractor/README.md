@@ -34,7 +34,7 @@ APK output:
 ## Notes and limitations
 
 - Face detection is not perfect. Small, blurred, side-facing, occluded, or very dark faces may be missed.
-- The app samples one frame every 0.8 seconds; a face visible only between samples can be missed.
+- The app samples the closest frame every 0.8 seconds; a face visible only between samples can be missed. Contact Sheet preview includes at most the first 400 extracted face images; the ZIP contains all saved crops.
 - V1.0 detects faces, not identities. It does not name people or verify who they are.
 - The current version processes in the foreground. Keep the app open during extraction.
 - Very long videos can take time. The safety cap is 3,600 sampled frames (about 48 minutes at this interval).
