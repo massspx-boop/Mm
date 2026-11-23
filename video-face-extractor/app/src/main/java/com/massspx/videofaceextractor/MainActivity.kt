@@ -13,7 +13,6 @@ import android.net.Uri
 import android.os.Bundle
 import android.os.Environment
 import android.provider.MediaStore
-import android.view.Gravity
 import android.view.ViewGroup
 import android.widget.Button
 import android.widget.LinearLayout
@@ -21,17 +20,17 @@ import android.widget.ProgressBar
 import android.widget.TextView
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
+import androidx.core.content.FileProvider
+import com.google.android.gms.tasks.Tasks
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.face.FaceDetection
 import com.google.mlkit.vision.face.FaceDetector
 import com.google.mlkit.vision.face.FaceDetectorOptions
-import com.google.android.gms.tasks.Tasks
 import java.io.File
 import java.io.FileOutputStream
 import java.util.Locale
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
-import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
 
@@ -144,30 +143,31 @@ class MainActivity : Activity() {
 
     private fun extract(videoUri: Uri): ExtractionResult {
         val retriever = MediaMetadataRetriever()
-        retriever.setDataSource(this, videoUri)
-        val durationMs = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
-            ?.toLongOrNull() ?: throw IllegalStateException("Video duration ကို မဖတ်နိုင်ပါ။")
-        if (durationMs <= 0L) throw IllegalStateException("Video အလွတ်ဖြစ်နေပါတယ်။")
-
         val options = FaceDetectorOptions.Builder()
             .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_FAST)
             .enableTracking()
             .setMinFaceSize(0.045f)
             .build()
         val detector: FaceDetector = FaceDetection.getClient(options)
-
-        val session = "VFE_" + System.currentTimeMillis()
-        val outputDir = File(getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS), session)
-        if (!outputDir.exists()) outputDir.mkdirs()
-        val crops = mutableListOf<Bitmap>()
-        val hashes = mutableListOf<Long>()
-        var saved = 0
-        val intervalMs = 800L
-        val maxFrames = 3600
-        var frameIndex = 0
-
         try {
+            retriever.setDataSource(this, videoUri)
+            val durationMs = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
+                ?.toLongOrNull() ?: throw IllegalStateException("Video duration ကို မဖတ်နိုင်ပါ။")
+            if (durationMs <= 0L) throw IllegalStateException("Video အလွတ်ဖြစ်နေပါတယ်။")
+
+            val session = "VFE_" + System.currentTimeMillis()
+            val outputDir = File(getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS), session)
+            if (!outputDir.exists() && !outputDir.mkdirs()) {
+                throw IllegalStateException("Output folder ဖန်တီးမရပါ။")
+            }
+            val imageFiles = mutableListOf<File>()
+            val hashes = mutableListOf<Long>()
+            var saved = 0
+            var frameIndex = 0
+            val intervalMs = 800L
+            val maxFrames = 3600
             var timeMs = 0L
+
             while (timeMs < durationMs && frameIndex < maxFrames) {
                 val frame = retriever.getFrameAtTime(timeMs * 1000L, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
                 if (frame != null) {
@@ -177,20 +177,22 @@ class MainActivity : Activity() {
                         val faces = Tasks.await(detector.process(InputImage.fromBitmap(scaled, 0)))
                         for (face in faces) {
                             val crop = cropFace(scaled, face.boundingBox) ?: continue
-                            val hash = averageHash(crop)
-                            val duplicate = hashes.any { java.lang.Long.bitCount(it xor hash) <= 4 }
-                            if (duplicate) {
+                            try {
+                                val hash = averageHash(crop)
+                                val duplicate = hashes.any { java.lang.Long.bitCount(it xor hash) <= 3 }
+                                if (duplicate) continue
+                                hashes.add(hash)
+                                val name = String.format(Locale.US, "face_%04d_%06dms.jpg", saved + 1, timeMs)
+                                val outFile = File(outputDir, name)
+                                FileOutputStream(outFile).use {
+                                    crop.compress(Bitmap.CompressFormat.JPEG, 92, it)
+                                }
+                                publishImage(crop, name)
+                                imageFiles.add(outFile)
+                                saved++
+                            } finally {
                                 crop.recycle()
-                                continue
                             }
-                            hashes.add(hash)
-                            val name = String.format(Locale.US, "face_%04d_%06dms.jpg", saved + 1, timeMs)
-                            FileOutputStream(File(outputDir, name)).use {
-                                crop.compress(Bitmap.CompressFormat.JPEG, 92, it)
-                            }
-                            publishImage(crop, name, "Detected face at ${timeMs}ms")
-                            crops.add(crop)
-                            saved++
                         }
                     } finally {
                         scaled.recycle()
@@ -198,18 +200,21 @@ class MainActivity : Activity() {
                 }
                 frameIndex++
                 val pct = min(99, ((timeMs.toDouble() / durationMs) * 100).toInt())
+                val currentFrame = frameIndex
+                val currentSaved = saved
                 runOnUiThread {
                     progress.progress = pct
-                    status.text = "စစ်ဆေးနေသည်... ${pct}%\nFrame: $frameIndex • မျက်နှာပုံ: $saved"
+                    status.text = "စစ်ဆေးနေသည်... ${pct}%\nFrame: $currentFrame • မျက်နှာပုံ: $currentSaved"
                 }
                 timeMs += intervalMs
             }
             if (saved == 0) throw IllegalStateException("မျက်နှာ မတွေ့ပါ။ ပိုကြည်လင်သော Video ကို စမ်းကြည့်ပါ။")
 
-            val sheet = makeContactSheet(crops)
-            val sheetName = "contact_sheet.jpg"
-            FileOutputStream(File(outputDir, sheetName)).use { sheet.compress(Bitmap.CompressFormat.JPEG, 90, it) }
-            publishImage(sheet, session + "_contact_sheet.jpg", "Video Face Extractor contact sheet")
+            // Keep the contact sheet bounded for low-memory phones; all full-size crops remain in the ZIP.
+            val sheet = makeContactSheet(imageFiles.take(400))
+            val sheetFile = File(outputDir, "contact_sheet.jpg")
+            FileOutputStream(sheetFile).use { sheet.compress(Bitmap.CompressFormat.JPEG, 90, it) }
+            publishImage(sheet, session + "_contact_sheet.jpg")
             sheet.recycle()
 
             val zipFile = File(getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS), session + ".zip")
@@ -220,7 +225,6 @@ class MainActivity : Activity() {
                     zip.closeEntry()
                 }
             }
-            crops.forEach { it.recycle() }
             return ExtractionResult(saved, zipFile)
         } finally {
             detector.close()
@@ -266,7 +270,7 @@ class MainActivity : Activity() {
     }
 
     @Suppress("DEPRECATION")
-    private fun publishImage(bitmap: Bitmap, name: String, description: String) {
+    private fun publishImage(bitmap: Bitmap, name: String) {
         val values = ContentValues().apply {
             put(MediaStore.Images.Media.DISPLAY_NAME, name)
             put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
@@ -290,32 +294,33 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun makeContactSheet(images: List<Bitmap>): Bitmap {
+    private fun makeContactSheet(files: List<File>): Bitmap {
         val cell = 180
         val columns = 4
-        val rows = (images.size + columns - 1) / columns
+        val rows = (files.size + columns - 1) / columns
         val sheet = Bitmap.createBitmap(columns * cell, rows * cell, Bitmap.Config.RGB_565)
         val canvas = Canvas(sheet)
         canvas.drawColor(Color.rgb(24, 29, 40))
         val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
-        images.forEachIndexed { index, bitmap ->
+        files.forEachIndexed { index, file ->
+            val options = android.graphics.BitmapFactory.Options().apply { inSampleSize = 4 }
+            val thumb = android.graphics.BitmapFactory.decodeFile(file.absolutePath, options) ?: return@forEachIndexed
             val col = index % columns
             val row = index / columns
-            val scale = min((cell - 12).toFloat() / bitmap.width, (cell - 12).toFloat() / bitmap.height)
-            val w = (bitmap.width * scale).toInt()
-            val h = (bitmap.height * scale).toInt()
+            val scale = min((cell - 12).toFloat() / thumb.width, (cell - 12).toFloat() / thumb.height)
+            val w = (thumb.width * scale).toInt().coerceAtLeast(1)
+            val h = (thumb.height * scale).toInt().coerceAtLeast(1)
             val left = col * cell + (cell - w) / 2
             val top = row * cell + (cell - h) / 2
-            canvas.drawBitmap(bitmap, null, Rect(left, top, left + w, top + h), paint)
+            canvas.drawBitmap(thumb, null, Rect(left, top, left + w, top + h), paint)
+            thumb.recycle()
         }
         return sheet
     }
 
     private fun shareZip() {
         val file = latestZip ?: return
-        val uri = androidx.core.content.FileProvider.getUriForFile(
-            this, packageName + ".provider", file
-        )
+        val uri = FileProvider.getUriForFile(this, packageName + ".provider", file)
         val intent = Intent(Intent.ACTION_SEND).apply {
             type = "application/zip"
             putExtra(Intent.EXTRA_STREAM, uri)
