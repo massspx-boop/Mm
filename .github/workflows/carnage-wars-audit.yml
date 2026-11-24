@@ -1,0 +1,51 @@
+name: Carnage Wars APK Audit
+
+on:
+  workflow_dispatch:
+    inputs:
+      apk_url:
+        description: "Direct HTTPS download URL for the original Carnage Wars 3.6 APK"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Validate and download APK
+        env:
+          APK_URL: ${{ inputs.apk_url }}
+        run: |
+          python - <<'PY'
+          import os
+          from urllib.parse import urlparse
+          u = urlparse(os.environ["APK_URL"])
+          if u.scheme != "https" or not u.netloc:
+              raise SystemExit("Only a direct HTTPS URL is accepted.")
+          PY
+          mkdir -p work
+          curl --fail --location --retry 3 --retry-delay 2 --max-time 900 \
+            "$APK_URL" --output work/CarnageWars.apk
+          test -s work/CarnageWars.apk
+          test "$(stat -c%s work/CarnageWars.apk)" -le 524288000
+
+      - name: Run read-only APK audit
+        run: |
+          python carnage-wars-3.6/tools/audit_apk.py work/CarnageWars.apk
+
+      - name: Upload audit report
+        uses: actions/upload-artifact@v4
+        with:
+          name: carnage-wars-3.6-audit-report
+          path: |
+            carnage-wars-3.6/audit-report.md
+            carnage-wars-3.6/audit-report.json
+          if-no-files-found: error
+          retention-days: 14
