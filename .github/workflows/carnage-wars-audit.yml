@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       apk_url:
-        description: "Direct HTTPS download URL for the original Carnage Wars 3.6 APK"
+        description: "Google Drive share link or direct HTTPS APK download URL"
         required: true
         type: string
 
@@ -14,27 +14,112 @@ permissions:
 jobs:
   audit:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Validate and download APK
+      - name: Download APK from Google Drive or HTTPS URL
         env:
           APK_URL: ${{ inputs.apk_url }}
         run: |
           python - <<'PY'
+          import http.cookiejar
           import os
-          from urllib.parse import urlparse
-          u = urlparse(os.environ["APK_URL"])
-          if u.scheme != "https" or not u.netloc:
-              raise SystemExit("Only a direct HTTPS URL is accepted.")
+          import re
+          import sys
+          from html.parser import HTMLParser
+          from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
+          from urllib.request import HTTPCookieProcessor, Request, build_opener
+
+          MAX_BYTES = 524288000
+          supplied = os.environ["APK_URL"].strip()
+          parsed = urlparse(supplied)
+          if parsed.scheme != "https" or not parsed.netloc:
+              raise SystemExit("Only HTTPS URLs are accepted.")
+
+          file_id = None
+          if parsed.hostname in ("drive.google.com", "www.drive.google.com",
+                                  "drive.usercontent.google.com"):
+              match = re.search(r"/file/d/([A-Za-z0-9_-]+)", parsed.path)
+              if match:
+                  file_id = match.group(1)
+              else:
+                  file_id = parse_qs(parsed.query).get("id", [None])[0]
+              if not file_id:
+                  raise SystemExit("Could not find a Google Drive file ID in that link.")
+              url = "https://drive.google.com/uc?export=download&id=" + file_id
+          else:
+              url = supplied
+
+          class FormParser(HTMLParser):
+              def __init__(self):
+                  super().__init__()
+                  self.action = None
+                  self.fields = {}
+                  self.in_form = False
+              def handle_starttag(self, tag, attrs):
+                  a = dict(attrs)
+                  if tag == "form" and not self.in_form:
+                      self.in_form = True
+                      self.action = a.get("action")
+                  elif tag == "input" and self.in_form:
+                      name = a.get("name")
+                      if name:
+                          self.fields[name] = a.get("value", "")
+
+          jar = http.cookiejar.CookieJar()
+          opener = build_opener(HTTPCookieProcessor(jar))
+          headers = {"User-Agent": "Mozilla/5.0 (compatible; CarnageWarsAudit/1.0)"}
+
+          def open_url(target):
+              return opener.open(Request(target, headers=headers), timeout=120)
+
+          response = open_url(url)
+          content_type = response.headers.get("Content-Type", "").lower()
+          if "text/html" in content_type:
+              page = response.read(2 * 1024 * 1024).decode("utf-8", "replace")
+              parser = FormParser()
+              parser.feed(page)
+              confirm = next((c.value for c in jar
+                              if c.name.startswith("download_warning")), None)
+              if parser.action and parser.fields:
+                  action = parser.action
+                  if action.startswith("/"):
+                      action = "https://drive.google.com" + action
+                  query = dict(parse_qs(urlparse(action).query))
+                  query.update({k: [v] for k, v in parser.fields.items()})
+                  target = urlunparse(urlparse(action)._replace(
+                      query=urlencode({k: v[0] for k, v in query.items()})))
+              elif confirm and file_id:
+                  target = "https://drive.google.com/uc?" + urlencode({
+                      "export": "download", "id": file_id, "confirm": confirm})
+              else:
+                  raise SystemExit("Google Drive returned a page requiring access. Set sharing to Anyone with the link (Viewer), then retry.")
+              response = open_url(target)
+              content_type = response.headers.get("Content-Type", "").lower()
+
+          if "text/html" in content_type:
+              raise SystemExit("Download returned an HTML page, not the APK. Check Drive sharing permissions.")
+          os.makedirs("work", exist_ok=True)
+          total = 0
+          with open("work/CarnageWars.apk", "wb") as out:
+              while True:
+                  chunk = response.read(1024 * 1024)
+                  if not chunk:
+                      break
+                  total += len(chunk)
+                  if total > MAX_BYTES:
+                      raise SystemExit("APK exceeds the 500 MB safety limit.")
+                  out.write(chunk)
+
+          if total < 4:
+              raise SystemExit("Downloaded file is empty or incomplete.")
+          with open("work/CarnageWars.apk", "rb") as f:
+              if f.read(4)[:2] != b"PK":
+                  raise SystemExit("Downloaded file is not a ZIP/APK archive.")
+          print(f"Downloaded APK: {total:,} bytes")
           PY
-          mkdir -p work
-          curl --fail --location --retry 3 --retry-delay 2 --max-time 900 \
-            "$APK_URL" --output work/CarnageWars.apk
-          test -s work/CarnageWars.apk
-          test "$(stat -c%s work/CarnageWars.apk)" -le 524288000
 
       - name: Run read-only APK audit
         run: |
