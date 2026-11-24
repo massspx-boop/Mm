@@ -17,9 +17,16 @@ This folder is isolated from the existing Game Mode V7 and other Android project
 
 ## Read-only audit workflow
 
-The manual GitHub Actions workflow `.github/workflows/carnage-wars-audit.yml` accepts a direct HTTPS download URL to the original APK, runs the read-only audit script, and stores Markdown/JSON reports as a workflow artifact. The APK itself is not committed to Git.
+The manual GitHub Actions workflow `.github/workflows/carnage-wars-audit.yml` accepts either a Google Drive share link or a direct HTTPS APK download URL. It downloads the original APK in the GitHub-hosted runner, runs the read-only audit script, and stores Markdown/JSON reports as a workflow artifact. The APK itself is not committed to Git.
 
-To run it: open the repository's **Actions** tab, choose **Carnage Wars APK Audit**, select **Run workflow**, and provide a direct HTTPS URL to the APK. A private ChatGPT attachment URL is not accessible to GitHub Actions; the APK must be placed at a reachable direct HTTPS download location first.
+To run it:
+1. Open the repository's **Actions** tab.
+2. Choose **Carnage Wars APK Audit**.
+3. Select **Run workflow**.
+4. Paste the Google Drive share link into the `apk_url` field, then start the workflow.
+5. Open the completed run and download the `carnage-wars-3.6-audit-report` artifact.
+
+For Google Drive, set General access to **Anyone with the link — Viewer**. If Google still returns an access or confirmation page the workflow cannot process, the run will stop with an error rather than treating the HTML page as an APK.
 
 ## Important limitation
 
